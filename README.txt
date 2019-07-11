@@ -14,4 +14,8 @@ CITATION:
 # Kruschke, J. K. (2014). Doing Bayesian Data Analysis: A Tutorial with R, JAGS, and Stan. 2nd Edition. Academic Press / Elsevier
 # https://sites.google.com/site/doingbayesiandataanalysis/
 
+Dataset for this project is Kaggle Dataset from:
+https://www.kaggle.com/mylesoneill/game-of-thrones
+
 - Some codes within "Character_Deaths_Source.R" and "Character_Deaths_A_Song_Ice_Fire.rmd" are from various homework and exercises of this class, and they cited withitn those files. 
+
