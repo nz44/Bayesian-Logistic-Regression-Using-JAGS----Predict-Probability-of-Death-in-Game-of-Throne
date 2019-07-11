@@ -1,0 +1,460 @@
+---
+title: "Character Deaths in A Song of Ice and Fire"
+author: "Naixin Zhu"
+date: "6/29/2019"
+output: 
+ html_document:
+    toc: true
+    toc_depth: 2
+    number_sections: true
+---
+
+```{r, include=FALSE}
+#knitr::opts_chunk$set(echo = TRUE)
+#current_dir <- dirname(rstudioapi::getSourceEditorContext()$path)
+#setwd(current_dir)
+remove(list = ls())
+
+source("Character_Death_Source.R")
+require(forcats)
+require(dummies)
+require(broom)
+require(bestglm)
+require(kableExtra)
+```
+
+# Introduction
+
+George R. R. Martin's novel, A Song of Ice and Fire, is a based on an imaginary world of medieval kingdoms. The books are well-known for the HBO show Game of Throne. The books created a plethora of characters, from nameless commoners to princesses and princes. The author is well known for killing off its characters frequently, on average a character dies every dozen page. The setting is cold weapon era, without rule of law and advance medicine, civilized culture live alongside barbarians and people’s life expectancy is likely to be short, for various reasons. Nevertheless, one important questions to ask is, does the author kill characters randomly, or there are some features that could significantly predict probability of death? 
+
+In order to answer the above question quantitatively, I will conduct Bayesian logistic regression with inclusion factors, to see which features are most important in determining death. I will compare the Bayesian regression with frequentist regression and they all yield same sign and significance level for certain sets of variables. 
+
+
+
+# Data
+
+I will use Kaggle dataset “Game of Thrones – Explore Deaths and Battles from this Fantasy World”, published by Myles O’Neill  on 19 May 2016. 
+
+```{r, include=FALSE}
+# load dataset
+df = read.csv("character-predictions.csv")
+
+# change empty string to NA
+df[df==""]<-NA
+
+# give culture, house and title a new factor level, "none", wherever there is NA
+# I do not delete missing because being missing itself tells us something
+df$culture = fct_explicit_na(df$culture, na_level = "None")
+df$house = fct_explicit_na(df$house, na_level = "None")
+df$title = fct_explicit_na(df$title, na_level = "None")
+
+# change columns with 0 or 1 binary dummies to factors
+cols = c("isMarried", "isPopular", "title", "isAlive", "male", "isNoble", "culture", "book1", "book2", "book3", "book4", "book5")
+df[cols] = lapply(df[cols], factor) 
+
+# Book1 throught Book5 indicates the number of appearance of the character 
+# create a new numeric variable that indicates the total number of appearances of character in the five books
+df["total_appearances"] = df["book1"] + df["book2"] + df["book3"] + df["book4"] + df["book5"] 
+
+# check
+#str(df)
+
+```
+
+# Descriptive Statistics
+
+The dataset has 1,956 observations, and 34 features. Many features are not quite useful because some of them are pre-processed features from other analysis. The one that interest me and could be used in predicting probability of death are: nobility or not, married or not, is popular or not. The popularity is derived from a composite index continous between 0 and 1, this feature code everything above 0.5 to 1. Those are binary features take value either 1 (being yes) or 0 (being no). The dataset also has two categorical features, culture, house and title, that are quite informative. There exist 348 distinct houses, 65 distinct cultures and 263 distinct titles. However, in my analysis I am going to drop title because it is highly correlated with nobility, and it cannot provide any additonal informaiton beyond nobility. House and culture can provide geographical information since they are attached to land in Westeros world. Geography means much more than just climate in the storyline, and later our predictions show some interesting pattern with some house and culture. 
+
+
+```{r, include=FALSE}
+n_houses = length(unique(df$house))
+n_titles = length(unique(df$title))
+n_cultures = length(unique(df$culture))
+
+```
+
+
+```{r, include=FALSE}
+# See the top 10 houses in terms number of characters belonging to that hosue, descending order
+house_freq = df %>% count(house, isAlive, sort = TRUE) %>% top_n(20)
+
+culture_freq = df %>% count(culture, isAlive, sort = TRUE) %>% top_n(20)
+
+gender_noble_freq = df %>% count(isNoble, male, isAlive)
+
+popular_freq = df %>% count(isPopular, isAlive)
+```
+
+
+The plot below shows dead/alive ratio the within top 10 houses, in which they have the most observations. Night's watch and Targaryan have proportionately more death than alive. It is quite obsvious because in the storyline Night's watch are closer to the army of the dead and may incur more casualties. Meanwhile, the house of Targaryan are almost all dead. 
+
+```{r, echo=FALSE}
+
+ggplot(data = house_freq, aes(x = reorder(house, -n), y = n)) + geom_bar(stat="identity", aes(fill = isAlive))  +
+  ggtitle("Alive or not among the Top 10 Houses") + theme(axis.text.x = element_text(angle = 90, hjust = 1))
+```
+
+
+The bar chart below shows the withtin culture ratio of dead to alive. We can see that Northern and Valyrian have proportionately more dead than alive. They are related to the previous bar plot because Night's Watch are located in the North, while house Targaryan belong to culture Valyrian. 
+
+```{r, echo=FALSE}
+ggplot(data = culture_freq, aes(x = reorder(culture, -n), y = n)) + geom_bar(stat="identity", aes(fill = isAlive))  +
+  ggtitle("Alive or not given Culture") + theme(axis.text.x = element_text(angle = 90, hjust = 1))
+```
+
+The bar chart below shows dead/alive ratio within popular/none-popular groups. We can see that even though vast majority of characters are not popular, but the ratio of dead is porportionately higher in the popular group. This is probably the curse of attracting attentions. 
+
+```{r, echo=FALSE}
+
+ggplot(data = popular_freq, aes(y=n, x=isPopular)) + 
+    geom_bar(aes(fill = isAlive), position="dodge", stat="identity") +
+    ggtitle("Alive or not given Popular or not") 
+```
+The two bar charts below show the dead/alive ratio within nobility groups and gender groups. 
+
+For gender group, we see than dead is proportionately higher for male, which is quite straightforward. In the setting of the story, men need to go and fight and they are more likely to die. However, it is a bit surprising that being noble or not does not affect your chance of dead. After some thought, this is also reasonable since in the story setting, having more money and higher status does not shield one from war, disease and conspiracy, which all cost lives. 
+
+```{r, echo=FALSE, out.width=c('50%', '50%'), fig.show='hold'}
+
+
+ggplot(data = gender_noble_freq, aes(y=n, x=isNoble)) + 
+    geom_bar(aes(fill = isAlive), position="dodge", stat="identity") +
+    ggtitle("Alive or not Given Nobility")
+
+ggplot(data = gender_noble_freq, aes(y=n, x=male)) + 
+    geom_bar(aes(fill = isAlive), position="dodge", stat="identity") +
+    ggtitle("Alive or not Given Gender")
+```
+
+# Feature Selection
+
+Since I am interested in the causal relationship between individual houses and cultures to the probabilty of death, I would like to turn the categorical variables into binary dummies and obtained 413 new dummy variables, each representing a single house or a single culture. I cannot possibly put them all into a frequentist linear regression, let along using MCMC on that many features. Therefore, feature selection is essential in the project. 
+
+I will follow three step strategy in selecting the important features:
+- First step: reduce the sheer size of dummy variables by ranking frequencies:
+ - I will reduce the number of house dummies to 6. I will select the top 5 hosues according to number of observations within each. The largest 5 houses get picked and have their own dummy variable. I will combine all other houses into a new dummy named "other_house", 1 means the character does not belong to any of the 5 top houses. 
+ - I will do the same with culture dummies and reduce the size to 6.
+ 
+- Second step: put 6 house, along with "male", "isPopular", "isNoble" and "isMarried", into bestglm package to select the best model with lowest AIC criteria and forward selection algorithm. The reason I do not use exhaustive search because it will take too long to complete. Repeat the process with 6 culture dummies instead 6 house dummies. The reason that I do not put house dummies and culture dummies simultaneous into bestglm is because they have an upper limit of 15 variables. 
+
+- Third step: according to the output of the best model from second step, select the important variables and put them into a frequentist logistic regression and look at the p-value and significance level of each coeffcient. Drop the ones with p-value above 0.05. 
+
+Finally I obtained a list of variables that will be feeded into MCMC in JAGS. 
+ 
+```{r, include=FALSE}
+# CITATION: blow code is from Introduction to Data Science HW7
+df_new_names <- names(df) %in% c("male", "culture", "house", "isMarried", "isNoble", "isPopular", "isAlive") 
+df_new <- df[df_new_names]
+df_new = dummy.data.frame(df_new, names = c("culture", "house") , sep = ".")
+colnames(df_new)[colnames(df_new)=="isAlive"] <- "y"
+# move y column to the last
+df_new <- df_new%>%select(-y,y)
+# Convert some variables to factors
+#str(df_ols)
+```
+
+```{r, include=FALSE}
+df_house_freq = df %>% 
+  group_by(house) %>%
+  summarise(no_rows = length(house))
+
+df_house_freq = df_house_freq  %>% arrange(desc(no_rows))
+
+top_houses = df_house_freq[1:5,1]
+top_houses = as.character(unlist(top_houses))
+length(top_houses)
+all_houses = as.character(unique(unlist(df["house"])))
+length(all_houses)
+none_top_houses = all_houses[!all_houses %in% top_houses]
+length(none_top_houses)
+
+##########################################################
+
+df_culture_freq = df %>% 
+  group_by(culture) %>%
+  summarise(no_rows = length(culture))
+
+df_culture_freq = df_culture_freq  %>% arrange(desc(no_rows))
+
+top_cultures = df_culture_freq[1:5,1]
+top_cultures = as.character(unlist(top_cultures))
+length(top_cultures)
+all_cultures = as.character(unique(unlist(df["culture"])))
+length(all_cultures)
+none_top_cultures = all_cultures[!all_cultures %in% top_cultures]
+length(none_top_cultures)
+```
+
+```{r,include=FALSE}
+
+df$house = as.character(df$house)
+df$house <- ifelse(df$house %in% none_top_houses, "other_house", df$house)
+df$house = as.factor(df$house)
+
+df$culture = as.character(df$culture)
+df$culture <- ifelse(df$culture %in% none_top_cultures, "other_culture", df$culture)
+df$culture = as.factor(df$culture)
+
+```
+
+```{r, echo=FALSE}
+df_feature_selection = df[c("culture", "male", "isPopular", "isAlive", "isNoble",  "isMarried")] 
+
+df_feature_selection = dummy.data.frame(df_feature_selection, names = c("culture") , sep = ".")
+
+df_feature_selection = df_feature_selection%>%
+  rename("y" = "isAlive") %>%
+  select(-y, y)
+
+
+
+# CITATION: this code is borrowed from intro to data science HW7
+res.bestglm <- bestglm(Xy = df_feature_selection, family = binomial,
+            IC = "AIC",                 # Information criteria for
+            method = "forward")
+
+res.bestglm$BestModels
+summary(res.bestglm$BestModels)
+```
+
+```{r, echo=FALSE}
+df_feature_selection = df[c("house", "male", "isPopular", "isAlive", "isNoble",  "isMarried")] 
+
+df_feature_selection = dummy.data.frame(df_feature_selection, names = c("house") , sep = ".")
+
+df_feature_selection = df_feature_selection%>%
+  rename("y" = "isAlive") %>%
+  select(-y, y)
+
+
+
+# CITATION: this code is borrowed from intro to data science HW7
+res.bestglm <- bestglm(Xy = df_feature_selection, family = binomial,
+            IC = "AIC",                 # Information criteria for
+            method = "forward")
+
+res.bestglm$BestModels
+summary(res.bestglm$BestModels)
+```
+## check for multicollinearity
+
+As we can see the correlation matrix below, the variables are correlated but to a tolerable degree. 
+
+```{r, echo=FALSE}
+
+df_feature_selection = df[c("house", "culture", "male", "isPopular", "isNoble",  "isMarried")] 
+
+df_feature_selection = dummy.data.frame(df_feature_selection, names = c("house", "culture") , sep = ".")
+
+df_feature_selection = apply(df_feature_selection, 2, as.numeric)
+
+cor_matrix = round(cor(df_feature_selection, method = c("pearson")),2)
+
+kable(cor_matrix)
+
+```
+```{r, echo=FALSE}
+require(stats)
+
+heatmap(cor_matrix)
+```
+
+
+
+```{r, echo=FALSE}
+df_feature_selection = df[c("house", "culture", "male", "isPopular", "isAlive", "isNoble",  "isMarried")] 
+
+df_feature_selection = dummy.data.frame(df_feature_selection, names = c("house", "culture") , sep = ".")
+
+mylogit <- glm(isAlive ~ `house.House Frey` + `house.House Targaryen` + `house.Night's Watch` + `culture.Free Folk` + `culture.Ironborn` + `culture.Valyrian` + male + isPopular + isMarried, data = df_feature_selection, family = "binomial")
+
+summary(mylogit)
+
+```
+
+# Bayesian Robust Logistic Regression Analysis
+
+## Hierarchical Model 1: Robusines Bayesian Logistic Regression
+
+citation(Textbook: page 635)
+
+$$y \sim dbern(\mu)$$
+
+The below expression is robuts in a way that allows data to come from two sources. $\alpha$ is generally smaller than $1-\alpha$, and it allows a small protion of data is coming from randomly gussing. Meanwhile, the majority of the data are coming from the logistic regression. This is robust to outliers, and in the conclusion you will see the comparison between the robust model and non-robust, and there is a difference. 
+
+$$\mu = \alpha \frac{1}{2} + (1 - \alpha) logistic(\beta_{0} + \sum_j \beta_jx_j)$$
+
+$$\alpha \sim dbeta(1,9)$$
+
+$$z\beta_0 \sim dnorm(0, 0.5^2)$$
+
+$$z\beta_j \sim dnorm(0, 0.5^2)$$
+
+
+
+```{r,include=FALSE}
+# CITATION: blow code is from Introduction to Data Science HW7
+df_feature_selection = df[c("house", "culture", "male", "isPopular", "isAlive", "isNoble",  "isMarried")] 
+
+df_feature_selection = dummy.data.frame(df_feature_selection, names = c("house", "culture") , sep = ".")
+
+df_feature_selection = apply(df_feature_selection, 2, as.numeric)
+
+
+df_Baye = df_feature_selection[,c("house.House Frey", "house.House Targaryen", "house.Night's Watch", "culture.Free Folk", "culture.Ironborn", "culture.Valyrian", "male",  "isPopular", "isMarried", "isAlive")]
+
+# get the column names for all features
+xName = c("house.House Frey", "house.House Targaryen", "house.Night's Watch", "culture.Free Folk", "culture.Ironborn", "culture.Valyrian", "male",  "isPopular", "isMarried") 
+yName = "isAlive"
+
+# check df_Baye is the not changing data from df_feature_selection
+tidy(colSums(df_Baye))
+tidy(colSums(df_feature_selection))
+
+#convert factor to numeric before shipping to JAGS
+df_Baye = df_Baye[,c(xName, yName)]
+
+```
+
+
+
+```{r, echo=FALSE}
+mcmcCoda = genMCMC( data = df_Baye , xName = xName , yName = yName, 
+                    numSavedSteps=10000 , thinSteps=1 , saveName=NULL ,
+                    runjagsMethod=runjagsMethodDefault , 
+                    nChains=nChainsDefault )
+```
+
+```{r, echo=FALSE}
+# Display diagnostics of chain, for specified parameters:
+parameterNames = varnames(mcmcCoda) # get all parameter names
+for ( parName in parameterNames ) {
+  diagMCMC( codaObject=mcmcCoda , parName=parName , 
+            saveName="DiagGraphs\\" , saveType="pdf" )
+}
+
+```
+
+```{r, include=FALSE}
+#------------------------------------------------------------------------------- 
+# Get summary statistics of chain:
+summaryInfo = smryMCMC( mcmcCoda , 
+                        saveName="Summary_Info\\" )
+show(summaryInfo)
+# Display posterior information:
+plotMCMC( mcmcCoda , data=df_Baye , xName=xName , yName=yName , 
+          pairsPlot=TRUE , showCurve=FALSE ,
+          saveName="plots\\"  , saveType="pdf" )
+#------------------------------------------------------------------------------- 
+
+```
+
+## Hierarchical Model 2: Bayesian Logistic Regression with Inclusion Factors
+
+In order to compare how the model performs with and without the robustness, I would like to perform a non-robust model. I have included the inclusion factor $\delta$ that is binary: 1 indicates the variable should included, while 0 indicates the variable should not be included. 
+
+$$y \sim dbern(\mu)$$
+
+
+$$\mu = logistic(\beta_{0} + \sum_j \delta_j \beta_jx_j)$$
+
+$$\delta \sim dbern(0.5)$$
+
+$$z\beta_0 \sim dnorm(0, 0.5^2)$$
+
+$$z\beta_j \sim dnorm(0, 0.5^2)$$
+
+
+```{r, include=FALSE}
+# Generate the MCMC chain:
+#startTime = proc.time()
+mcmcCoda_VarSelect = genMCMC_VarSelect( data=df_Baye , xName=xName , yName=yName , 
+                    numSavedSteps=10000 , thinSteps=1, saveName=NULL ,
+                    runjagsMethod=runjagsMethodDefault , 
+                    nChains=nChainsDefault)
+#stopTime = proc.time()
+#duration = stopTime - startTime
+#show(duration)
+```
+
+```{r, include=FALSE}
+#------------------------------------------------------------------------------- 
+# Display diagnostics of chain, for specified parameters:
+parameterNames = varnames(mcmcCoda_VarSelect) # get all parameter names
+for ( parName in parameterNames ) {
+  diagMCMC( codaObject=mcmcCoda_VarSelect , parName=parName , 
+            saveName="diagMCMC_VarSelect\\" , saveType="pdf" )
+}
+```
+
+```{r, include=FALSE}
+#------------------------------------------------------------------------------- 
+# Get summary statistics of chain:
+summaryInfo = smryMCMC_VarSelect( mcmcCoda_VarSelect , 
+                        saveName="Summary_Info_VarSelect\\" )
+show(summaryInfo)
+# Display posterior information:
+plotMCMC_VarSelect( mcmcCoda_VarSelect  , data=df_Baye , xName=xName , yName=yName , 
+          pairsPlot=TRUE , showCurve=FALSE ,
+          saveName="plots_VarSelect\\" , saveType="pdf")
+#------------------------------------------------------------------------------- 
+```
+
+
+# Results and Conclusion
+
+Both the robust and non robust models have the same predictions:
+  - Being Targaryen, Night's Watch, Valyrian, male and popular will significantly increase one character's chance of death.
+  - Being Ironborn will reduce one character's chance of death. 
+  - Those significant variables, which have 95% HDI lying entirely on one side of zero, all have inclusion coefficient with mode 1.
+
+However, we can still observe the difference between robust and non-robust model:
+  - For House Targaryen, the outlier changes its estimate. In the robust model, outlier the Dragon Queen, does not affect the overall bleak outlook of house Targaryen. Nonetheless, in the none-robust model, the probability of death is reduced by the few survivors of house Targaryen. 
+
+![Table 1. Results of Bayesian Robust Logistic Regression](logistic_reg_summary.png)
+
+
+
+
+![Table 2. Results of None-robuts Bayesian Logistic Regression with Inclusion Factor](var_select_summary.png)
+
+The table below shows that frequentist logistic regression yield the similar results as both Bayesian models. 
+
+![Table 3. Results of Frequentist Logistic Regression](frequentist_result.png)
+
+
+We can take a look at some posterior distrbution from robust Bayesian logistic models:
+![Figure 1. Posterior Distribution of Robust Bayesian Logistic Regression](Baye_posteriro_robust_1.png)
+
+
+![Figure 2. Posterior Distribution of Robust Bayesian Logistic Regression](Baye_posteriro_robust_2.png)
+
+
+![Figure 3. Posterior Distribution of Robust Bayesian Logistic Regression](Baye_posteriro_robust_3.png)
+
+![Figure 4. Posterior Distribution of Robust Bayesian Logistic Regression](Baye_posteriro_robust_4.png)
+
+
+![Figure 5. Inclusion Factor for House Targaryen](PPT_delta_2.png)
+
+
+
+![Figure 6. Inclusion Factor for Culture Freefolk](PPT_delta_4.png)
+
+
+![Figure 7. Inclusion Factor for Culture Ironborn](PPT_delta_5.png)
+
+
+
+![Figure 8. Inclusion Factor for isMarried](PPT_delta_9.png)
+
+
+
+There are some potential problems with the dataset that might bias the analysis. First, I do not know how the variable “isAlive” is coded. The ones that are coded 0 under “isAlive” is for sure dead because the book explicitly portrayed them so. However, for most characters that do not deserve author’s attention, we are unclear whether they are alive by the end of book 5. 
+
+Another variable I could have used but did not is the appearances in the book. They are binary variables indicating whether a character appeared in a book, from book 1 to book 5. This could have a direct correlation to “isAlive”, adding this variable to the regression as a control would probably make other effect insignificant. 
+
+The project is a good start place for me to use Bayesian logistic regression, which I believe I will use in many empirical economic researches. As for the topic itself, even though it does not seem to be “serious” research, it contributes to the general discussion of “artificial intelligence” and its influence in artistic creation. I believe soon, or it could have happened already, that AI could generate novel plots for us according to our taste. Then what will be the role of human creativity play?
+
+
+
