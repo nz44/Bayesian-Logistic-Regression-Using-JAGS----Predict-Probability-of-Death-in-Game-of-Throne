@@ -1,4 +1,4 @@
-- This is an individual course project at George Washington University 2019 Summer DATS 6450 Bayesian Methods for Data Science
+This is an individual course project at George Washington University 2019 Summer DATS 6450 Bayesian Methods for Data Science
 
 # DIRECTIONS:
 After you have downloaded the folder, first open "Character_Deaths_A_Song_Ice_Fire.rmd" and hit run. The source file "Character_Deaths_Source.R" and "DBDA2E-utilities.R" are linked in the rmd file. 
@@ -17,7 +17,7 @@ Please find the reference to and website of the book below:
 Kruschke, J. K. (2014). Doing Bayesian Data Analysis: A Tutorial with R, JAGS, and Stan. 2nd Edition. Academic Press / Elsevier
 https://sites.google.com/site/doingbayesiandataanalysis/
 
-Dataset for this project is Kaggle Dataset from:
+- Dataset for this project is Kaggle Dataset from:
 https://www.kaggle.com/mylesoneill/game-of-thrones
 
 - Some codes within "Character_Deaths_Source.R" and "Character_Deaths_A_Song_Ice_Fire.rmd" are from various homework and exercises of this class, and they cited withitn those files. 
